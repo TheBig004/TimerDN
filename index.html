@@ -706,14 +706,15 @@
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    gap: 10px;
+    gap: 1vh;
+    padding: 2vh 2vw;
   }
 
   .fullscreen-overlay.visible { display: flex; }
 
   .fs-phase {
     font-family: 'DM Mono', monospace;
-    font-size: 0.9rem;
+    font-size: clamp(0.75rem, 1.6vw, 1.15rem);
     letter-spacing: 4px;
     text-transform: uppercase;
     color: var(--muted);
@@ -721,14 +722,14 @@
 
   .fs-name {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-size: clamp(2rem, 6vw, 5.5rem);
     letter-spacing: 6px;
     text-align: center;
   }
 
   .fs-clock {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: clamp(10rem, 35vw, 22rem);
+    font-size: clamp(9rem, min(48vw, 62vh), 38rem);
     line-height: 0.9;
     letter-spacing: 6px;
     text-shadow: 0 0 80px currentColor;
@@ -737,9 +738,14 @@
 
   .fs-step {
     font-family: 'DM Mono', monospace;
-    font-size: 0.75rem;
+    font-size: clamp(0.7rem, 1.4vw, 1rem);
     letter-spacing: 2px;
     color: var(--muted);
+  }
+
+  @media (orientation: landscape) {
+    .fs-name { font-size: clamp(1.8rem, 4.5vw, 4rem); }
+    .fs-clock { font-size: clamp(10rem, min(50vw, 68vh), 42rem); }
   }
 
   .fs-close {
@@ -1484,8 +1490,36 @@ function beep(type) {
 function toggleFullscreen() {
   fullscreenOpen = !fullscreenOpen;
   document.getElementById('fullscreenOverlay').classList.toggle('visible', fullscreenOpen);
-  if (fullscreenOpen) updateTimerUI();
+  if (fullscreenOpen) {
+    updateTimerUI();
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+    if (req) req.call(el).catch(() => {});
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
+  } else {
+    exitBrowserFullscreen();
+  }
 }
+
+function exitBrowserFullscreen() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+  if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    exit.call(document).catch(() => {});
+  }
+}
+
+// Si el usuario sale del modo inmersivo con el gesto/botón del sistema (no con "✕ Cerrar"),
+// sincroniza el overlay para que no quede "atascado" en fullscreen visual sin estar en fullscreen real
+['fullscreenchange', 'webkitfullscreenchange'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement && fullscreenOpen) {
+      fullscreenOpen = false;
+      document.getElementById('fullscreenOverlay').classList.remove('visible');
+    }
+  });
+});
 
 // ============================================================
 // UTILS

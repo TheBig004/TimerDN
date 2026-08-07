@@ -1,5 +1,5 @@
 // Service Worker — Timer Pro (cache-first, todo el contenido es local, sin llamadas externas)
-const CACHE_NAME = 'timerpro-cache-v1';
+const CACHE_NAME = 'timerpro-cache-v2';
 const CORE_ASSETS = [
   './',
   './index.html',
