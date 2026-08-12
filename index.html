@@ -1165,6 +1165,8 @@ function startPause() {
     interval = setInterval(tick, 1000);
     requestWakeLock();
     speakPhase();
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
 }
 
@@ -1439,6 +1441,7 @@ function speakPhase() {
 let audioCtx = null;
 let masterGain = null;
 let compressor = null;
+let makeupGain = null;
 let masterVolume = 1.5; // 150% por defecto — más potencia de fábrica para competir con música externa
 
 function getAudioCtx() {
@@ -1447,17 +1450,22 @@ function getAudioCtx() {
     masterGain = audioCtx.createGain();
     masterGain.gain.value = masterVolume;
 
-    // Compresor/limitador: permite subir el volumen (incluso sobre el 100%) sin que
-    // el sonido se distorsione o "chicharree" al mezclarse con música de otra fuente
+    // Compresor: absorbe los picos para que no distorsione al subir el volumen
     compressor = audioCtx.createDynamicsCompressor();
-    compressor.threshold.value = -18;
-    compressor.knee.value = 6;
-    compressor.ratio.value = 14;
-    compressor.attack.value = 0.001;
-    compressor.release.value = 0.15;
+    compressor.threshold.value = -24;
+    compressor.knee.value = 10;
+    compressor.ratio.value = 8;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+
+    // Ganancia de recuperación: sube el nivel de vuelta después de comprimir.
+    // Sin esto, el compresor deja el sonido MÁS BAJO que antes (el bug de la versión anterior).
+    makeupGain = audioCtx.createGain();
+    makeupGain.gain.value = 3.5;
 
     masterGain.connect(compressor);
-    compressor.connect(audioCtx.destination);
+    compressor.connect(makeupGain);
+    makeupGain.connect(audioCtx.destination);
   }
   return audioCtx;
 }
