@@ -812,10 +812,10 @@
       </label>
       <span class="toggle-label">Sonido</span>
       <span style="font-size:1rem;margin-left:4px">🔊</span>
-      <input type="range" id="volumeSlider" min="0" max="100" value="80"
+      <input type="range" id="volumeSlider" min="0" max="200" value="150"
         style="width:100px;accent-color:var(--accent);cursor:pointer;margin:0 6px"
         oninput="updateVolume(this.value)">
-      <span class="toggle-label" id="volumeLabel">80%</span>
+      <span class="toggle-label" id="volumeLabel">150%</span>
       <label class="toggle" style="margin-left:10px">
         <input type="checkbox" id="voiceToggle" checked>
         <div class="toggle-track"></div>
@@ -1423,7 +1423,7 @@ function speak(text) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'es-ES';
     u.rate = 1.05;
-    u.volume = masterVolume;
+    u.volume = Math.min(masterVolume, 1);
     window.speechSynthesis.speak(u);
   } catch (e) { /* se ignora si el navegador no soporta o falla */ }
 }
@@ -1438,14 +1438,26 @@ function speakPhase() {
 // ============================================================
 let audioCtx = null;
 let masterGain = null;
-let masterVolume = 0.8;
+let compressor = null;
+let masterVolume = 1.5; // 150% por defecto — más potencia de fábrica para competir con música externa
 
 function getAudioCtx() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioCtx.createGain();
     masterGain.gain.value = masterVolume;
-    masterGain.connect(audioCtx.destination);
+
+    // Compresor/limitador: permite subir el volumen (incluso sobre el 100%) sin que
+    // el sonido se distorsione o "chicharree" al mezclarse con música de otra fuente
+    compressor = audioCtx.createDynamicsCompressor();
+    compressor.threshold.value = -18;
+    compressor.knee.value = 6;
+    compressor.ratio.value = 14;
+    compressor.attack.value = 0.001;
+    compressor.release.value = 0.15;
+
+    masterGain.connect(compressor);
+    compressor.connect(audioCtx.destination);
   }
   return audioCtx;
 }
@@ -1460,26 +1472,45 @@ function beep(type) {
   if (!document.getElementById('soundToggle').checked) return;
   try {
     const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') ctx.resume();
+    // Ondas "square"/"sawtooth" tienen más armónicos que "sine": se escuchan más
+    // fuerte y cortan mejor sobre música o ruido ambiente, aunque el volumen sea el mismo
     const configs = {
-      start: [{freq:880, dur:0.13, wave:'sine'}, {freq:1320, dur:0.20, wave:'sine'}],
-      end:   [{freq:660, dur:0.12, wave:'sine'}, {freq:880, dur:0.12, wave:'sine'}, {freq:1100, dur:0.28, wave:'sine'}],
-      warn:  [{freq:520, dur:0.09, wave:'square'}]
+      start: [{freq:880, dur:0.16, wave:'square', gain:1}, {freq:1320, dur:0.22, wave:'square', gain:0.8}],
+      end:   [{freq:660, dur:0.14, wave:'sawtooth', gain:1}, {freq:880, dur:0.14, wave:'sawtooth', gain:1}, {freq:1100, dur:0.32, wave:'sawtooth', gain:0.9}],
+      warn:  [{freq:600, dur:0.11, wave:'square', gain:1}, {freq:600, dur:0.11, wave:'square', gain:1}]
     };
     const seq = configs[type] || configs.start;
     let t = ctx.currentTime;
-    seq.forEach(({freq, dur, wave}) => {
+    seq.forEach(({freq, dur, wave, gain: peakGain}) => {
+      // Tono principal
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(masterGain);
       osc.frequency.value = freq;
-      osc.type = wave || 'sine';
+      osc.type = wave || 'square';
       gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(1.0, t + 0.01);
+      gain.gain.linearRampToValueAtTime(peakGain, t + 0.008);
       gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
       osc.start(t);
       osc.stop(t + dur + 0.02);
-      t += dur + 0.03;
+
+      // Capa una octava arriba, más suave: agrega "brillo" que ayuda a que el beep
+      // se distinga de música con mucho bajo, sin sonar como un pitido agudo molesto
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(masterGain);
+      osc2.frequency.value = freq * 2;
+      osc2.type = 'sine';
+      gain2.gain.setValueAtTime(0, t);
+      gain2.gain.linearRampToValueAtTime(peakGain * 0.35, t + 0.008);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.8);
+      osc2.start(t);
+      osc2.stop(t + dur + 0.02);
+
+      t += dur + (type === 'warn' ? 0.06 : 0.03);
     });
   } catch(e) {}
 }
