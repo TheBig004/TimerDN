@@ -816,6 +816,7 @@
         style="width:100px;accent-color:var(--accent);cursor:pointer;margin:0 6px"
         oninput="updateVolume(this.value)">
       <span class="toggle-label" id="volumeLabel">150%</span>
+      <button class="btn btn-ghost btn-sm" style="padding:6px 10px;font-size:0.68rem" onclick="testBeep()">🔊 Probar</button>
       <label class="toggle" style="margin-left:10px">
         <input type="checkbox" id="voiceToggle" checked>
         <div class="toggle-track"></div>
@@ -1450,22 +1451,27 @@ function getAudioCtx() {
     masterGain = audioCtx.createGain();
     masterGain.gain.value = masterVolume;
 
-    // Compresor: absorbe los picos para que no distorsione al subir el volumen
-    compressor = audioCtx.createDynamicsCompressor();
-    compressor.threshold.value = -24;
-    compressor.knee.value = 10;
-    compressor.ratio.value = 8;
-    compressor.attack.value = 0.003;
-    compressor.release.value = 0.25;
+    try {
+      // Compresor: absorbe los picos para que no distorsione al subir el volumen
+      compressor = audioCtx.createDynamicsCompressor();
+      compressor.threshold.value = -24;
+      compressor.knee.value = 10;
+      compressor.ratio.value = 8;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
 
-    // Ganancia de recuperación: sube el nivel de vuelta después de comprimir.
-    // Sin esto, el compresor deja el sonido MÁS BAJO que antes (el bug de la versión anterior).
-    makeupGain = audioCtx.createGain();
-    makeupGain.gain.value = 3.5;
+      // Ganancia de recuperación: sube el nivel de vuelta después de comprimir.
+      makeupGain = audioCtx.createGain();
+      makeupGain.gain.value = 3.5;
 
-    masterGain.connect(compressor);
-    compressor.connect(makeupGain);
-    makeupGain.connect(audioCtx.destination);
+      masterGain.connect(compressor);
+      compressor.connect(makeupGain);
+      makeupGain.connect(audioCtx.destination);
+    } catch (e) {
+      // Si el compresor no está soportado en este navegador, conectar directo
+      // (más simple, sin protección de picos, pero mejor que quedar en silencio)
+      masterGain.connect(audioCtx.destination);
+    }
   }
   return audioCtx;
 }
@@ -1476,11 +1482,23 @@ function updateVolume(val) {
   if (masterGain) masterGain.gain.value = masterVolume;
 }
 
+function testBeep() {
+  try {
+    const ctx = getAudioCtx();
+    ctx.resume().then(() => {
+      showToast('Estado audio: ' + ctx.state + ' — sonando prueba...');
+      beep('start');
+    }).catch(err => showToast('❌ No se pudo activar audio: ' + err.message));
+  } catch (err) {
+    showToast('❌ Error al crear audio: ' + err.message);
+  }
+}
+
 function beep(type) {
   if (!document.getElementById('soundToggle').checked) return;
   try {
     const ctx = getAudioCtx();
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     // Ondas "square"/"sawtooth" tienen más armónicos que "sine": se escuchan más
     // fuerte y cortan mejor sobre música o ruido ambiente, aunque el volumen sea el mismo
     const configs = {
@@ -1520,7 +1538,12 @@ function beep(type) {
 
       t += dur + (type === 'warn' ? 0.06 : 0.03);
     });
-  } catch(e) {}
+  } catch(e) {
+    if (!window._beepErrorShown) {
+      window._beepErrorShown = true;
+      showToast('❌ Beep falló: ' + e.message);
+    }
+  }
 }
 
 // ============================================================
