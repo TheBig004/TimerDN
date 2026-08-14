@@ -1443,6 +1443,7 @@ let audioCtx = null;
 let masterGain = null;
 let compressor = null;
 let makeupGain = null;
+let limiter = null;
 let masterVolume = 1.5; // 150% por defecto — más potencia de fábrica para competir con música externa
 
 function getAudioCtx() {
@@ -1452,7 +1453,7 @@ function getAudioCtx() {
     masterGain.gain.value = masterVolume;
 
     try {
-      // Compresor: absorbe los picos para que no distorsione al subir el volumen
+      // Etapa 1: compresor que absorbe los picos
       compressor = audioCtx.createDynamicsCompressor();
       compressor.threshold.value = -24;
       compressor.knee.value = 10;
@@ -1460,15 +1461,26 @@ function getAudioCtx() {
       compressor.attack.value = 0.003;
       compressor.release.value = 0.25;
 
-      // Ganancia de recuperación: sube el nivel de vuelta después de comprimir.
+      // Etapa 2: ganancia de recuperación (más agresiva)
       makeupGain = audioCtx.createGain();
-      makeupGain.gain.value = 3.5;
+      makeupGain.gain.value = 5.5;
+
+      // Etapa 3: limitador "brickwall" — empuja el volumen hasta el techo real (0dBFS)
+      // sin que se corte/distorsione, para exprimir el máximo posible antes de sumarse
+      // a la música externa
+      limiter = audioCtx.createDynamicsCompressor();
+      limiter.threshold.value = -1;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.0005;
+      limiter.release.value = 0.1;
 
       masterGain.connect(compressor);
       compressor.connect(makeupGain);
-      makeupGain.connect(audioCtx.destination);
+      makeupGain.connect(limiter);
+      limiter.connect(audioCtx.destination);
     } catch (e) {
-      // Si el compresor no está soportado en este navegador, conectar directo
+      // Si algo no está soportado en este navegador, conectar directo
       // (más simple, sin protección de picos, pero mejor que quedar en silencio)
       masterGain.connect(audioCtx.destination);
     }
@@ -1499,12 +1511,14 @@ function beep(type) {
   try {
     const ctx = getAudioCtx();
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    // Ondas "square"/"sawtooth" tienen más armónicos que "sine": se escuchan más
-    // fuerte y cortan mejor sobre música o ruido ambiente, aunque el volumen sea el mismo
+    // Frecuencias entre 2000-3200 Hz: la zona donde el oído humano es más sensible
+    // (por lejos más audible que graves/medios, donde vive la mayoría de la música)
     const configs = {
-      start: [{freq:880, dur:0.16, wave:'square', gain:1}, {freq:1320, dur:0.22, wave:'square', gain:0.8}],
-      end:   [{freq:660, dur:0.14, wave:'sawtooth', gain:1}, {freq:880, dur:0.14, wave:'sawtooth', gain:1}, {freq:1100, dur:0.32, wave:'sawtooth', gain:0.9}],
-      warn:  [{freq:600, dur:0.11, wave:'square', gain:1}, {freq:600, dur:0.11, wave:'square', gain:1}]
+      start: [{freq:2000, dur:0.10, wave:'square', gain:1}, {freq:2800, dur:0.16, wave:'square', gain:1}],
+      end:   [{freq:2800, dur:0.09, wave:'sawtooth', gain:1}, {freq:2400, dur:0.09, wave:'sawtooth', gain:1}, {freq:2000, dur:0.22, wave:'sawtooth', gain:1}],
+      // Triple pulso rápido tipo alarma de detector de humo: mucho más notorio
+      // que un tono sostenido, aunque el volumen promedio sea el mismo
+      warn:  [{freq:3200, dur:0.055, wave:'square', gain:1}, {freq:3200, dur:0.055, wave:'square', gain:1}, {freq:3200, dur:0.055, wave:'square', gain:1}]
     };
     const seq = configs[type] || configs.start;
     let t = ctx.currentTime;
@@ -1517,26 +1531,26 @@ function beep(type) {
       osc.frequency.value = freq;
       osc.type = wave || 'square';
       gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(peakGain, t + 0.008);
+      gain.gain.linearRampToValueAtTime(peakGain, t + 0.006);
       gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
       osc.start(t);
       osc.stop(t + dur + 0.02);
 
-      // Capa una octava arriba, más suave: agrega "brillo" que ayuda a que el beep
-      // se distinga de música con mucho bajo, sin sonar como un pitido agudo molesto
+      // Subarmónico grave de refuerzo: agrega "cuerpo" para que no se sienta como
+      // un pitido fino y desaparezca — sin bajar de la banda de alta sensibilidad
       const osc2 = ctx.createOscillator();
       const gain2 = ctx.createGain();
       osc2.connect(gain2);
       gain2.connect(masterGain);
-      osc2.frequency.value = freq * 2;
-      osc2.type = 'sine';
+      osc2.frequency.value = freq / 2;
+      osc2.type = 'square';
       gain2.gain.setValueAtTime(0, t);
-      gain2.gain.linearRampToValueAtTime(peakGain * 0.35, t + 0.008);
+      gain2.gain.linearRampToValueAtTime(peakGain * 0.5, t + 0.006);
       gain2.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.8);
       osc2.start(t);
       osc2.stop(t + dur + 0.02);
 
-      t += dur + (type === 'warn' ? 0.06 : 0.03);
+      t += dur + (type === 'warn' ? 0.04 : 0.03);
     });
   } catch(e) {
     if (!window._beepErrorShown) {
